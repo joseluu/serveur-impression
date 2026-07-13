@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Journal des impressions</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 2rem 1rem; font-family: system-ui, sans-serif;
+      background: #14151a; color: #e9e9ec;
+      display: flex; flex-direction: column; align-items: center; gap: 1.5rem;
+    }
+    main { width: min(100%, 900px); display: flex; flex-direction: column; gap: 1.25rem; }
+    h1 { margin: 0; font-size: 1.5rem; }
+    a { color: #58a6ff; }
+    .carte { background: #1c1d24; border: 1px solid #2c2d35; border-radius: 10px; padding: 1rem 1.25rem; }
+    .defilant { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th { text-align: left; font-weight: 600; color: #7c7d87; font-size: .75rem;
+         text-transform: uppercase; letter-spacing: .05em; padding: .4rem .5rem; white-space: nowrap; }
+    td { padding: .5rem; border-top: 1px solid #2c2d35; white-space: nowrap; }
+    tbody tr:hover { background: #22232b; }
+    .pseudo { font-weight: 600; }
+    .detail { color: #8b8c95; }
+    .vide { color: #6c6d77; font-style: italic; }
+    form { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+    input {
+      background: #14151a; border: 1px solid #3a3b45; color: #e9e9ec;
+      border-radius: 6px; padding: .6rem .8rem; font-size: 1rem; font-family: ui-monospace, monospace;
+    }
+    button {
+      background: #2f81f7; border: none; color: #fff; font-weight: 600;
+      border-radius: 6px; padding: .6rem 1.2rem; font-size: 1rem; cursor: pointer;
+    }
+    .refus { color: #ff8a84; font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Journal des impressions</h1>
+
+  {% if not autorise %}
+    <div class="carte">
+      <p class="refus">Ce journal est protégé par un code d'accès.</p>
+      <form method="get" action="/journal">
+        <input type="text" name="t" placeholder="Code d'accès" autofocus autocomplete="off" spellcheck="false">
+        <button type="submit">Ouvrir le journal</button>
+      </form>
+    </div>
+  {% else %}
+    <div class="carte defilant">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Heure</th><th>Demandeur</th><th>Image</th>
+            <th>Format</th><th>Taille</th><th>Travail</th><th>Imprimante</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entrees %}
+            <tr>
+              <td class="detail">{{ e.recu[:10] }}</td>
+              <td>{{ e.recu[11:19] }}</td>
+              <td class="pseudo">{{ e.pseudo }}</td>
+              <td class="detail">{{ e.fichier }}</td>
+              <td class="detail">{{ e.format }} {{ e.dimensions }}</td>
+              <td class="detail">{{ (e.octets // 1024) if e.octets else '—' }} ko</td>
+              <td class="detail">#{{ e.numero }}</td>
+              <td class="detail">{{ e.imprimante }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="vide">Aucune demande d'impression enregistrée.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="detail">{{ entrees|length }} demande(s) — les plus récentes en premier.</p>
+  {% endif %}
+
+  <p><a href="/">&larr; Retour à l'état de l'imprimante</a></p>
+</main>
+</body>
+</html>

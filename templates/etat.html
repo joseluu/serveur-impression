@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Serveur d'impression &mdash; état</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 2rem 1rem; font-family: system-ui, sans-serif;
+      background: #14151a; color: #e9e9ec;
+      display: flex; flex-direction: column; align-items: center; gap: 1.75rem;
+    }
+    main { width: min(100%, 900px); display: flex; flex-direction: column; gap: 1.75rem; }
+    h1 { margin: 0; font-size: 1.5rem; }
+    h2 { margin: 0 0 .6rem; font-size: .8rem; text-transform: uppercase;
+         letter-spacing: .08em; color: #7c7d87; font-weight: 600; }
+
+    .carte { background: #1c1d24; border: 1px solid #2c2d35; border-radius: 10px; padding: 1rem 1.25rem; }
+    .imprimante { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; }
+    .pastille { width: .8rem; height: .8rem; border-radius: 50%; flex: none; }
+    .ok       { background: #3fb950; } .encours { background: #d29922; }
+    .probleme { background: #f85149; } .attente { background: #58a6ff; }
+    .termine  { background: #3fb950; }
+    .nom-imprimante { font-weight: 600; font-size: 1.1rem; }
+    .detail { color: #8b8c95; font-size: .85rem; }
+    .alerte { color: #ffb0aa; font-size: .85rem; width: 100%; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th { text-align: left; font-weight: 600; color: #7c7d87; font-size: .75rem;
+         text-transform: uppercase; letter-spacing: .05em; padding: .4rem .5rem; }
+    td { padding: .5rem; border-top: 1px solid #2c2d35; vertical-align: middle; }
+    tbody tr:hover { background: #22232b; }
+    .apercu { width: 48px; height: 48px; object-fit: cover; border-radius: 5px; background: #000; display: block; }
+    .pseudo { font-weight: 600; }
+    .etat-cell { display: flex; align-items: center; gap: .45rem; white-space: nowrap; }
+    .vide { color: #6c6d77; font-style: italic; padding: .75rem .5rem; }
+    button.annuler {
+      background: transparent; border: 1px solid #4a4b52; color: #b9bac3;
+      border-radius: 6px; padding: .25rem .6rem; font-size: .8rem; cursor: pointer;
+    }
+    button.annuler:hover { border-color: #f85149; color: #ff8a84; }
+    /* Le tableau doit pouvoir defiler seul sur un ecran etroit, sans faire deborder la page. */
+    .defilant { overflow-x: auto; }
+    footer { color: #6c6d77; font-size: .8rem; text-align: center; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Serveur d'impression</h1>
+
+  <section>
+    <h2>Imprimante</h2>
+    <div class="carte imprimante">
+      <span class="pastille" id="pastille"></span>
+      <span class="nom-imprimante" id="nom">…</span>
+      <span class="detail" id="etat"></span>
+      <span class="detail" id="media"></span>
+      <span class="alerte" id="alerte"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Spool</h2>
+    <div class="carte imprimante">
+      <span class="detail" id="spool">…</span>
+      <span class="detail">purge : <code>~/gestion/purge-print-spool.sh</code></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>File d'attente (<span id="nb-file">0</span>)</h2>
+    <div class="carte defilant">
+      <table>
+        <thead>
+          <tr><th></th><th>#</th><th>Demandeur</th><th>Image</th><th>État</th><th>Reçu</th><th></th></tr>
+        </thead>
+        <tbody id="file"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Historique</h2>
+    <div class="carte defilant">
+      <table>
+        <thead>
+          <tr><th></th><th>N°</th><th>Demandeur</th><th>Image</th><th>État</th><th>Reçu</th></tr>
+        </thead>
+        <tbody id="historique"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Actualisé toutes les 2 s &middot; <span id="horodatage"></span>
+    &middot; <a href="/journal">Journal des demandes</a>
+  </footer>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  function heure(iso) {
+    if (!iso) return '—';
+    return iso.slice(11, 19);
+  }
+
+  function octets(n) {
+    if (!n) return '0 o';
+    const unites = ['o', 'ko', 'Mo', 'Go'];
+    const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), unites.length - 1);
+    return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${unites[i]}`;
+  }
+
+  function ligne(t, avecAnnulation) {
+    const tr = document.createElement('tr');
+
+    const tdImg = document.createElement('td');
+    if (t.vignette) {
+      const img = document.createElement('img');
+      img.className = 'apercu';
+      img.src = `/vignette/${t.numero}`;
+      img.alt = '';
+      // L'image a pu etre purgee du spool entre-temps : on laisse la case vide.
+      img.onerror = () => tdImg.replaceChildren();
+      tdImg.appendChild(img);
+    }
+    tr.appendChild(tdImg);
+
+    const num = document.createElement('td');
+    num.textContent = avecAnnulation ? (t.position ?? '—') : t.numero;
+    tr.appendChild(num);
+
+    const pseudo = document.createElement('td');
+    pseudo.className = 'pseudo';
+    pseudo.textContent = t.pseudo;
+    tr.appendChild(pseudo);
+
+    const fichier = document.createElement('td');
+    fichier.className = 'detail';
+    fichier.textContent = t.dimensions
+      ? `${t.fichier} (${t.dimensions[0]}×${t.dimensions[1]})`
+      : t.fichier;
+    tr.appendChild(fichier);
+
+    const etat = document.createElement('td');
+    const cell = document.createElement('span');
+    cell.className = 'etat-cell';
+    const pastille = document.createElement('span');
+    pastille.className = `pastille ${t.classe}`;
+    cell.append(pastille, document.createTextNode(t.etat));
+    etat.appendChild(cell);
+    tr.appendChild(etat);
+
+    const recu = document.createElement('td');
+    recu.className = 'detail';
+    recu.textContent = heure(t.recu);
+    tr.appendChild(recu);
+
+    if (avecAnnulation) {
+      const action = document.createElement('td');
+      const bouton = document.createElement('button');
+      bouton.className = 'annuler';
+      bouton.textContent = 'Annuler';
+      bouton.onclick = async () => {
+        bouton.disabled = true;
+        await fetch(`/api/travaux/${t.numero}/annuler`, { method: 'POST' });
+        rafraichir();
+      };
+      action.appendChild(bouton);
+      tr.appendChild(action);
+    }
+    return tr;
+  }
+
+  function remplir(tbody, travaux, avecAnnulation, colonnes, message) {
+    tbody.replaceChildren();
+    if (!travaux.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = colonnes;
+      td.className = 'vide';
+      td.textContent = message;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    travaux.forEach((t) => tbody.appendChild(ligne(t, avecAnnulation)));
+  }
+
+  async function rafraichir() {
+    try {
+      const d = await (await fetch('/api/etat')).json();
+      const p = d.imprimante;
+      $('pastille').className = `pastille ${p.classe}`;
+      $('nom').textContent = p.nom;
+      $('etat').textContent = p.accepte === false && p.presente
+        ? `${p.etat} — n'accepte plus de travaux`
+        : p.etat;
+      $('media').textContent = `format ${d.media}`;
+      $('spool').textContent =
+        `${d.spool.fichiers} fichier(s) — ${octets(d.spool.octets)}`;
+      const soucis = [p.message, ...(p.raisons || [])].filter(Boolean);
+      $('alerte').textContent = soucis.join(' · ');
+
+      $('nb-file').textContent = d.file.length;
+      remplir($('file'), d.file, true, 7, 'Aucun travail en attente.');
+      remplir($('historique'), d.historique, false, 6, 'Aucun travail terminé.');
+      $('horodatage').textContent = new Date().toLocaleTimeString('fr-FR');
+    } catch {
+      $('alerte').textContent = 'Serveur injoignable.';
+      $('pastille').className = 'pastille probleme';
+    }
+  }
+
+  rafraichir();
+  setInterval(rafraichir, 2000);
+</script>
+</body>
+</html>

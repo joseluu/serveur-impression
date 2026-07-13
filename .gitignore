@@ -1,0 +1,4 @@
+venv/
+spool/
+journal/
+__pycache__/
