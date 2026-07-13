@@ -201,14 +201,28 @@ def etat_imprimante(conn: cups.Connection) -> dict:
     p = imprimantes[IMPRIMANTE]
     libelle, classe = ETATS_IMPRIMANTE.get(p["printer-state"], ("etat inconnu", "probleme"))
     raisons = [r for r in p.get("printer-state-reasons", []) if r != "none"]
+
+    # getPrinters() ne renvoie PAS 'printer-is-accepting-jobs' : il faut le demander
+    # explicitement, sinon on croit a tort que l'imprimante refuse les travaux.
+    try:
+        accepte = bool(
+            conn.getPrinterAttributes(
+                IMPRIMANTE, requested_attributes=["printer-is-accepting-jobs"]
+            ).get("printer-is-accepting-jobs", True)
+        )
+    except cups.IPPError:
+        accepte = True  # dans le doute, on ne crie pas au loup
+
     return {
         "nom": IMPRIMANTE,
         "presente": True,
         "etat": libelle,
-        "classe": classe if not raisons else "probleme",
+        # Une imprimante « prete » mais qui refuse les travaux n'est pas prete du tout :
+        # toute nouvelle photo sera rejetee. La pastille doit le montrer.
+        "classe": "probleme" if (raisons or not accepte) else classe,
         "message": p.get("printer-state-message") or "",
         "raisons": raisons,
-        "accepte": bool(p.get("printer-is-accepting-jobs", False)),
+        "accepte": accepte,
         "description": p.get("printer-info", ""),
         "connexion": p.get("device-uri", ""),
     }
