@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Serveur d'impression : recoit une image par API, l'envoie a l'imprimante, expose l'etat.
 
-L'imprimante visee en production est une **DNP DS820** (sublimation thermique, USB) ; le
-developpement se fait avec une **HP LaserJet 3055** (USB). Le pilote de la DS820 est fourni
-par Gutenprint (`gutenprint.5.3://dnp-ds820/expert`) : c'est le meme chemin CUPS, donc seule
-la configuration change (voir IMPRIMANTE / MEDIA ci-dessous), pas le code.
+L'imprimante visee en production est une **DNP DS620** (sublimation thermique, USB), au format
+10x15 ; le developpement se fait avec n'importe quelle imprimante disponible.
 
-C'est **CUPS qui fait la file d'attente** : on ne rajoute pas une file par-dessus, sinon les
-deux divergeraient. Le serveur soumet le travail immediatement et tient a jour un registre qui
-associe chaque numero de travail CUPS au pseudo du demandeur et a l'image d'origine, choses que
-CUPS ne sait pas stocker. La page d'etat fusionne les deux : etat reel lu par IPP, pseudo lu
-dans le registre.
+Le serveur tourne indifferemment sur **Linux** (file d'attente CUPS) ou sur **Windows**
+(spouleur du systeme, via spouleur_windows.py qui en presente la meme surface). Le kiosque a
+d'abord tourne sous Linux ; la machine ayant rendu l'ame, il tourne aujourd'hui sous Windows.
+Les deux chemins sont conserves : le code appelant est identique, seul l'import change.
+
+C'est **le spouleur du systeme qui fait la file d'attente** : on ne rajoute pas une file
+par-dessus, sinon les deux divergeraient. Le serveur soumet le travail immediatement et tient a
+jour un registre qui associe chaque numero de travail au pseudo du demandeur et a l'image
+d'origine, choses que le spouleur ne sait pas stocker. La page d'etat fusionne les deux : etat
+reel lu du spouleur, pseudo lu dans le registre.
 """
 
 import hmac
@@ -25,7 +28,11 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-import cups
+try:
+    import cups  # Linux : file d'attente CUPS
+except ImportError:
+    # Windows : meme surface (Connection, IPPError), au-dessus du spouleur du systeme.
+    import spouleur_windows as cups
 from flask import Flask, abort, jsonify, render_template, request, send_file
 from PIL import Image
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -42,13 +49,13 @@ JOURNAL = RACINE / "journal" / "impressions.log"
 # Relu a chaque appel : modifier le fichier suffit, pas besoin de redemarrer le serveur.
 FICHIER_CODE = RACINE / "code-acces.txt"
 
-# Imprimante cible, telle que nommee dans CUPS (`lpstat -p`).
-#   - test        : HP3055    -> media A4
-#   - production  : DS820     -> media au format DNP retenu
-# Se surchargent sans toucher au code, via l'unite systemd ou l'environnement :
-#   IMPRIMANTE=DS820 MEDIA=w288h432 ./venv/bin/python app.py
-IMPRIMANTE = os.environ.get("IMPRIMANTE", "HP3055")
-MEDIA = os.environ.get("MEDIA", "A4")
+# Imprimante cible, telle que nommee par le spouleur : `lpstat -p` sous Linux, le nom affiche
+# dans Peripheriques et imprimantes sous Windows -- attention, il contient souvent des espaces.
+# Le media garde la notation CUPS (points PostScript) sur les deux plateformes : w288h432 vaut
+# 4x6 pouces, soit le 10x15 de la DS620. Se surchargent par l'environnement, sans toucher au
+# code :  IMPRIMANTE="DS620" MEDIA=w288h432 python app.py
+IMPRIMANTE = os.environ.get("IMPRIMANTE", "DS620")
+MEDIA = os.environ.get("MEDIA", "w288h432")
 
 FORMATS_ACCEPTES = {"JPEG": ".jpg", "PNG": ".png"}
 TAILLE_MAX = 25 * 1024 * 1024
@@ -253,8 +260,18 @@ def travaux(conn: cups.Connection) -> tuple[list, list]:
     actifs = conn.getJobs(which_jobs="not-completed", requested_attributes=["job-id", "job-state", "job-name"])
     file = [enrichi(num, attrs, pos) for pos, (num, attrs) in enumerate(sorted(actifs.items()), start=1)]
 
+    # L'historique vient du registre, pas du spouleur. CUPS gardait les travaux termines
+    # un moment, le spouleur Windows les efface des que la feuille est sortie : s'appuyer
+    # sur getJobs("completed") donnerait une page vide. Le registre, lui, contient tout ce
+    # qu'on a soumis, avec le pseudo et l'horodatage -- ce que le spouleur n'a jamais su.
+    # On y superpose l'etat reel quand il est encore connu (annule plutot que termine).
     finis = conn.getJobs(which_jobs="completed", requested_attributes=["job-id", "job-state", "job-name"])
-    historique = [enrichi(num, attrs) for num, attrs in sorted(finis.items(), reverse=True)][:HISTORIQUE_MAX]
+    recents = sorted(registre.items(), key=lambda kv: kv[1].get("recu", ""), reverse=True)
+    historique = [
+        enrichi(int(numero), finis.get(int(numero), {"job-state": 9}))
+        for numero, _ in recents
+        if numero.isdigit() and int(numero) not in actifs
+    ][:HISTORIQUE_MAX]
     return file, historique
 
 

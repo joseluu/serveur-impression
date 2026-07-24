@@ -1,3 +1,6 @@
 Flask==3.1.3
 pillow==12.3.0
-pycups==2.0.4
+# La couche imprimante depend de la plateforme : CUPS sous Linux, le spouleur Windows
+# (via pywin32) sous Windows. Les marqueurs d'environnement laissent pip choisir le bon.
+pycups==2.0.4; sys_platform != "win32"
+pywin32==312; sys_platform == "win32"
